@@ -92,7 +92,7 @@ const Index = () => {
               <FileUpload 
                 id="job-description" 
                 label="Job Description File" 
-                accept=".pdf,.docx" 
+                accept=".pdf,.docx,.txt" 
                 multiple={false}
                 onFilesSelected={handleJobDescriptionUpload}
               />
@@ -110,7 +110,7 @@ const Index = () => {
               <FileUpload 
                 id="resumes" 
                 label="Resume Files" 
-                accept=".pdf,.docx" 
+                accept=".pdf,.docx,.txt" 
                 multiple={true}
                 onFilesSelected={handleResumeUpload}
               />
