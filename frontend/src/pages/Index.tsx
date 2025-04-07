@@ -45,31 +45,27 @@ const Index = () => {
 
     setIsLoading(true);
 
+    const formData = new FormData();
+    formData.append("job_description_file", jobDescription);
+    resumes.forEach((resume) => {
+      formData.append("resume_files", resume);
+    });
+
     try {
-      // In a real application, you would send the files to your backend API
-      // For this example, we'll simulate a response after a short delay
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      // Mock response - in a real app, you'd get this from your API
-      const mockResponse: RankingResult[] = [
-        {
-          "filename": "Resume1.docx",
-          "score": 9,
-          "reasoning": "The candidate's resume demonstrates a strong match with the job description. They have 8+ years of experience in designing, developing, and deploying scalable web applications using Python and Django, which aligns with the job's primary requirements. The candidate's experience with RESTful API design, cloud platforms (AWS), and version control systems (Git) also matches the job's required skills. Additionally, their experience in mentoring junior developers, participating in code reviews, and contributing to architectural decisions aligns with the job's responsibilities. The only area where the candidate's experience is not explicitly mentioned is in containerization technologies (Docker, Kubernetes) and frontend technologies (React, Angular, Vue.js), which are listed as preferred skills. However, the candidate does mention experience with Docker, which partially fulfills this preference."
-        },
-        {
-          "filename": "Resume2.txt",
-          "score": 4,
-          "reasoning": "The candidate has some experience in Python and API development, but their primary expertise lies in Java and Spring framework. They have basic knowledge of AWS and Git, which are required skills for the job. However, they lack experience in Django, relational databases, and cloud platforms, which are crucial for the Senior Software Engineer position. The candidate's eagerness to expand their skills in Python-based technologies is a positive aspect, but it does not compensate for the lack of direct experience in the required skills."
-        },
-        {
-          "filename": "Resume3.pdf",
-          "score": 2,
-          "reasoning": "The candidate's resume shows a strong focus on frontend development with JavaScript frameworks like React and Angular, but the job description requires a Senior Software Engineer with expertise in Python, Django, and backend technologies. Although the candidate has some basic knowledge of backend technologies and version control systems like Git, their overall experience and skills do not align closely with the job requirements."
-        }
-      ];
-      
-      setRankingResults(mockResponse);
+      const response = await fetch("http://localhost:8000/rank_resumes/", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        console.error("Error ranking resumes:", errorData);
+        toast.error(`Failed to rank resumes: ${errorData?.error || response.statusText}`);
+        return;
+      }
+
+      const data: RankingResult[] = await response.json();
+      setRankingResults(data);
       toast.success("Resumes ranked successfully!");
     } catch (error) {
       console.error("Error ranking resumes:", error);
