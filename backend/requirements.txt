@@ -1,0 +1,9 @@
+fastapi[standard]
+python-multipart 
+langchain-community
+langchain-groq
+langgraph
+pypdf
+docx
+docx2txt
+pydantic
