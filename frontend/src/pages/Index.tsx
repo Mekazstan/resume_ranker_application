@@ -52,7 +52,7 @@ const Index = () => {
     });
 
     try {
-      const response = await fetch("http://localhost:8000/rank_resumes/", {
+      const response = await fetch("https://resume-ranker-backend.onrender.com/rank_resumes/", {
         method: "POST",
         body: formData,
       });
