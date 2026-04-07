@@ -1,39 +1,185 @@
-# Resume Ranker Application (This is just a demo 😊)
+# HR Candidate Levelling Engine
 
-## Overview
+An AI-powered tool that automatically evaluates candidate resumes against a standardised **CMS (Capacity Management System)** role framework — assigning each applicant their most appropriate level across five role families: **Programme Assistant (PAS)**, **Project Officer (PO)**, **Junior Programme Associate (JPA)**, **Programme Associate (PRA)**, and **Senior Programme Associate (SPA)**.
 
-This application is a smart tool designed to help streamline the process of reviewing job applications. It takes a job description and multiple resumes as input and then ranks these resumes based on their relevance to the specific requirements outlined in the job description. This ranking is accompanied by a score and a brief explanation of why each resume received that particular score.
+Built for real-world HR use in public health programme environments in Africa.
 
-## What it Does
+---
 
-At its core, the Resume Ranker performs the following actions:
+## What It Does
 
-1.  **Accepts Job Descriptions and Resumes:** You can upload a job description (in PDF, DOCX, or TXT format) and multiple resumes (also in PDF, DOCX, or TXT format).
-2.  **Intelligent Analysis:** Using advanced language processing powered by a Large Language Model (LLM), the application analyzes the content of the job description and each resume. It goes beyond simple keyword matching to understand the skills, experience, and overall suitability of each candidate.
-3.  **Relevance Scoring:** For each submitted resume, the application assigns a relevance score on a scale of 1 to 10, indicating how well the candidate's profile aligns with the job requirements.
-4.  **Reasoning and Explanation:** Alongside the score, the application provides a brief explanation highlighting the key factors that contributed to the assigned relevance score. This helps understand the rationale behind the ranking.
-5.  **Ranked Results:** Finally, the application presents a ranked list of the submitted resumes, ordered from the most relevant to the least relevant, along with their scores and explanations.
+Instead of manually reading through CVs and guessing suitability, this engine:
 
-## Who is it For?
+1. **Extracts structured metrics from each resume** using an LLM (Groq / llama-3.3-70b-versatile):
+   - Total years of professional experience
+   - Years of relevant Public Health experience in Africa
+   - Highest qualification level (OND → BSc → MSc/MPH → PhD)
+   - Number of formal certifications
+   - Domain keyword matches (e.g., LMIS, RI, OBR, LQAS, Donor reporting, Workplan, Data quality…)
+   - Seniority verb matches (e.g., led, managed, coordinated, supervised, designed…)
 
-This application is beneficial for a wide range of users, both technical and non-technical:
+2. **Runs a deterministic scoring engine** against 25 CMS role levels (5 families × 5 levels):
+   - Enforces **Hard Gates** first (minimum experience, qualifications, Africa PH background)
+   - Calculates a **weighted composite score** for every level the candidate clears
+   - Assigns the **highest eligible CMS level** the candidate qualifies for
 
-* **Recruiters and Hiring Managers:** This tool significantly speeds up the initial screening process by quickly identifying the most promising candidates for a job opening. It helps focus efforts on reviewing the most relevant applications first.
-* **Human Resources (HR) Professionals:** By providing an objective and data-driven way to assess resume relevance, the application can contribute to a more efficient and fair hiring process.
-* **Small Business Owners:** For businesses without dedicated HR departments, this tool offers a cost-effective way to manage and evaluate job applications effectively.
-* **Technical Teams:** When hiring for technical roles, the application can understand and assess the relevance of specific technical skills and experience mentioned in resumes.
-* **Anyone Involved in the Hiring Process:** Anyone who needs to review multiple resumes for a job opening can benefit from the time-saving and insightful analysis provided by this application.
+3. **Returns a detailed breakdown** for every candidate:
+   - Assigned CMS level (e.g., `PO-3`, `PAS-2`)
+   - Matrix math breakdown (how each factor contributed to the score)
+   - For unqualified candidates: a gate-by-gate Pass/Fail table and the closest level they narrowly missed, with the exact points gap
 
-## Benefits
+---
 
-Using the Resume Ranker offers several key advantages:
+## Role Families & Levels
 
-* **Significant Time Savings:** Quickly sift through a large number of applications and identify the most relevant candidates, reducing the time spent on manual screening.
-* **Improved Efficiency:** Focus your attention on the top-ranked resumes, leading to a more efficient and targeted review process.
-* **More Objective Assessment:** Reduce bias in the initial screening by using an AI-powered tool to assess relevance based on the content of the documents.
-* **Enhanced Understanding:** The reasoning provided for each score helps you understand why a particular resume was ranked in a certain way, offering valuable insights into candidate suitability.
-* **Better Candidate Shortlisting:** Increase the quality of your candidate shortlist by prioritizing applicants whose skills and experience closely match the job requirements.
-* **Streamlined Workflow:** Integrate this tool into your existing hiring workflow to automate the initial stages of resume review.
-* **Data-Driven Decisions:** Make more informed decisions about which candidates to interview based on the objective relevance scores and explanations.
+| Code | Role Family | Levels | Score Range |
+|------|------------|--------|-------------|
+| PAS | Programme Assistant | 1–5 | 35% – 50% |
+| PO | Project Officer | 1–5 | 60% – 75% |
+| JPA | Junior Programme Associate | 1–5 | 62% – 77% |
+| PRA | Programme Associate | 1–5 | 65% – 80% |
+| SPA | Senior Programme Associate | 1–5 | 65% – 80% |
 
-In essence, the Resume Ranker acts as an intelligent first-pass filter, helping you identify the best talent faster and more effectively, ultimately leading to better hiring outcomes.
+Scoring weight categories: **Total Years · Relevant PH Years · Qualification · Certifications · Domain Keywords · Seniority Verbs**
+
+---
+
+## Tech Stack
+
+### Backend
+- **FastAPI** — REST API server
+- **LangChain + LangGraph** — LLM extraction pipeline with a stateful workflow graph
+- **Groq (llama-3.3-70b-versatile)** — Fast, free-tier LLM for structured data extraction
+- **PyPDF / Docx2txt** — Resume file parsing
+- **Python-dotenv** — Environment variable management
+
+### Frontend
+- **React + TypeScript** — Component-based UI
+- **Vite** — Build tooling & dev server
+- **TailwindCSS + shadcn/ui** — Design system and UI components
+- **Lucide React** — Icons
+
+---
+
+## Project Structure
+
+```
+resume_ranker_application/
+├── backend/
+│   ├── main.py                  # FastAPI app and /rank_resumes/ endpoint
+│   ├── workflow_processing.py   # LLM extraction, scoring engine, LangGraph workflow
+│   ├── requirements.txt
+│   └── .env                     # GROQ_API_KEY (not committed)
+│
+└── frontend/
+    ├── src/
+    │   ├── pages/Index.tsx       # Main page — upload & trigger analysis
+    │   └── components/
+    │       ├── RankingResults.tsx # Results cards with full breakdown UI
+    │       └── FileUpload.tsx     # Drag & drop file upload component
+    ├── .env                       # VITE_API_URL (not committed)
+    └── ...
+```
+
+---
+
+## Getting Started
+
+### Prerequisites
+- Python 3.11+
+- Node.js 18+
+- A free [Groq API key](https://console.groq.com)
+
+### Backend Setup
+
+```bash
+cd backend
+
+# Create and activate virtual environment
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Create your .env file
+echo "GROQ_API_KEY=your_key_here" > .env
+
+# Start the server
+fastapi dev main.py
+# Server runs at http://localhost:8000
+```
+
+### Frontend Setup
+
+```bash
+cd frontend
+
+# Install dependencies
+npm install
+
+# Create your local .env file
+echo "VITE_API_URL=http://localhost:8000" > .env.local
+
+# Start the dev server
+npm run dev
+# App runs at http://localhost:8080
+```
+
+---
+
+## Environment Variables
+
+### Backend (`backend/.env`)
+| Variable | Description |
+|----------|-------------|
+| `GROQ_API_KEY` | Your Groq API key from [console.groq.com](https://console.groq.com) |
+
+### Frontend (`frontend/.env.local`)
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `VITE_API_URL` | Base URL of the backend API | Falls back to production URL |
+
+---
+
+## How the Scoring Works
+
+### Step 1 — Hard Gates (Mandatory)
+A candidate is only scored for a level if they meet **all three** minimum requirements:
+- ✅ Total years of experience ≥ minimum
+- ✅ Africa Public Health experience ≥ minimum  
+- ✅ Qualification level ≥ minimum
+
+### Step 2 — Weighted Score
+Each factor is normalised to `0–1` (capped at a sensible maximum) then multiplied by its weight:
+
+```
+Score = (norm_total_yrs × W₁) + (norm_ph_yrs × W₂) + (norm_qual × W₃)
+      + (norm_certs × W₄) + (norm_keywords × W₅) + (norm_verbs × W₆)
+```
+
+Normalization caps: Total Years → 15y · Relevant Years → 10y · Keywords → 8 hits · Seniority Verbs → 6 hits
+
+### Step 3 — Level Assignment
+The candidate is assigned the **highest level** for which their score meets or exceeds the minimum threshold. If no level is reached, the system reports the closest level they fell short of and the exact points gap.
+
+---
+
+## Supported File Formats
+
+Resumes can be uploaded as:
+- `.pdf`
+- `.docx`
+- `.txt`
+
+Multiple resumes can be uploaded and analysed in a single batch. Files are processed concurrently for speed.
+
+---
+
+## Key Domain Keywords Tracked
+
+`LMIS · RI · OBR · LQAS · IDSR · Supportive supervision · Stakeholder engagement · Donor reporting · Workplan · Quality assurance · Budget · Policy · Logistics · Data quality`
+
+## Seniority Verbs Tracked
+
+`led · managed · coordinated · supervised · designed · owned · delivered · facilitated · implemented · oversaw`
