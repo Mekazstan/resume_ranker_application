@@ -7,7 +7,7 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*", "https://resume-ranker-frontend.onrender.com/"],
+    allow_origins=["*", "http://localhost:8081/"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -15,13 +15,8 @@ app.add_middleware(
 
 @app.post("/rank_resumes/")
 async def upload_and_rank(
-    job_description_file: UploadFile = File(...),
     resume_files: List[UploadFile] = File(...),
 ):
-    job_description_text = extract_text_from_file(job_description_file)
-    if not job_description_text:
-        return {"error": "Failed to extract text from the job description."}
-
     resume_texts = {}
     for resume_file in resume_files:
         resume_text = extract_text_from_file(resume_file)
@@ -31,19 +26,18 @@ async def upload_and_rank(
     if not resume_texts:
         return {"message": "No valid resumes uploaded."}
 
-    inputs = {"job_description": job_description_text, "resume_texts": resume_texts, "ranked_results": []}
+    inputs = {"resume_texts": resume_texts, "leveled_results": []}
     result = await graph.ainvoke(inputs)
-    return result["ranked_results"]
+    return result["leveled_results"]
 
 
 @app.get("/")
 async def root():
     return {
-        "message": "Resume Ranker Endpoint",
-        "project": "API for Ranking Resume based on relevance to the Job Description given",
+        "message": "HR Candidate Leveling System",
+        "project": "API for deterministic levelling of candidates against standard CMS frameworks.",
         "documentation": {
             "swagger": "/docs",
             "redoc": "/redoc"
         }
     }
-

@@ -1,54 +1,95 @@
 import asyncio
 from fastapi import UploadFile
 from pydantic import BaseModel, Field
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, TypedDict
 import tempfile
 import os
 from dotenv import load_dotenv
 from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader
 from langchain_groq import ChatGroq
 from langchain_core.prompts import PromptTemplate
-from langchain_core.output_parsers import StrOutputParser
 from langchain_core.output_parsers import PydanticOutputParser
 from langgraph.graph import StateGraph, END
 
+# --- Define the CMS HR Matrix based on provided rules ---
+CMS_MATRIX = {
+    "PAS-1": {"level": 1, "min_total_exp": 1, "min_ph_exp": 0, "min_qual": 1, "w_total_yrs": 12, "w_rel_yrs": 6, "w_qual": 10, "w_cert": 0, "w_dom_keywords": 18, "w_sen_verbs": 4, "min_score": 35},
+    "PAS-2": {"level": 2, "min_total_exp": 1, "min_ph_exp": 0, "min_qual": 1, "w_total_yrs": 14, "w_rel_yrs": 8, "w_qual": 10, "w_cert": 0, "w_dom_keywords": 20, "w_sen_verbs": 5, "min_score": 38},
+    "PAS-3": {"level": 3, "min_total_exp": 2, "min_ph_exp": 0.5,"min_qual": 2, "w_total_yrs": 16, "w_rel_yrs": 10, "w_qual": 10, "w_cert": 4, "w_dom_keywords": 20, "w_sen_verbs": 6, "min_score": 42},
+    "PAS-4": {"level": 4, "min_total_exp": 2.5,"min_ph_exp": 1,  "min_qual": 2, "w_total_yrs": 18, "w_rel_yrs": 12, "w_qual": 10, "w_cert": 6, "w_dom_keywords": 20, "w_sen_verbs": 7, "min_score": 46},
+    "PAS-5": {"level": 5, "min_total_exp": 3, "min_ph_exp": 1.5,"min_qual": 2, "w_total_yrs": 18, "w_rel_yrs": 14, "w_qual": 10, "w_cert": 8, "w_dom_keywords": 20, "w_sen_verbs": 8, "min_score": 50},
 
-class LLMRelevanceOutput(BaseModel):
-    relevance_score: int = Field(description="Relevance score on a scale of 1 to 10")
-    reasoning: str = Field(description="Reasoning for the assigned relevance score")
+    "PO-1": {"level": 6, "min_total_exp": 3, "min_ph_exp": 2, "min_qual": 2, "w_total_yrs": 20, "w_rel_yrs": 16, "w_qual": 10, "w_cert": 8, "w_dom_keywords": 24, "w_sen_verbs": 10, "min_score": 60},
+    "PO-2": {"level": 7, "min_total_exp": 4, "min_ph_exp": 2.5, "min_qual": 2, "w_total_yrs": 20, "w_rel_yrs": 18, "w_qual": 10, "w_cert": 10, "w_dom_keywords": 24, "w_sen_verbs": 10, "min_score": 63},
+    "PO-3": {"level": 8, "min_total_exp": 5, "min_ph_exp": 3, "min_qual": 2, "w_total_yrs": 20, "w_rel_yrs": 20, "w_qual": 10, "w_cert": 12, "w_dom_keywords": 24, "w_sen_verbs": 12, "min_score": 68},
+    "PO-4": {"level": 9, "min_total_exp": 6, "min_ph_exp": 4, "min_qual": 3, "w_total_yrs": 20, "w_rel_yrs": 20, "w_qual": 10, "w_cert": 12, "w_dom_keywords": 24, "w_sen_verbs": 14, "min_score": 72},
+    "PO-5": {"level": 10, "min_total_exp": 7, "min_ph_exp": 5, "min_qual": 3, "w_total_yrs": 20, "w_rel_yrs": 20, "w_qual": 10, "w_cert": 12, "w_dom_keywords": 24, "w_sen_verbs": 14, "min_score": 75},
+
+    "JPA-1": {"level": 11, "min_total_exp": 4.5, "min_ph_exp": 2.5, "min_qual": 2, "w_total_yrs": 20, "w_rel_yrs": 18, "w_qual": 10, "w_cert": 8, "w_dom_keywords": 24, "w_sen_verbs": 10, "min_score": 62},
+    "JPA-2": {"level": 12, "min_total_exp": 5.5, "min_ph_exp": 3, "min_qual": 2, "w_total_yrs": 20, "w_rel_yrs": 20, "w_qual": 10, "w_cert": 10, "w_dom_keywords": 24, "w_sen_verbs": 12, "min_score": 66},
+    "JPA-3": {"level": 13, "min_total_exp": 6.5, "min_ph_exp": 4, "min_qual": 2, "w_total_yrs": 20, "w_rel_yrs": 20, "w_qual": 10, "w_cert": 12, "w_dom_keywords": 24, "w_sen_verbs": 12, "min_score": 70},
+    "JPA-4": {"level": 14, "min_total_exp": 7.5, "min_ph_exp": 5, "min_qual": 3, "w_total_yrs": 20, "w_rel_yrs": 20, "w_qual": 10, "w_cert": 12, "w_dom_keywords": 24, "w_sen_verbs": 14, "min_score": 74},
+    "JPA-5": {"level": 15, "min_total_exp": 8.5, "min_ph_exp": 6, "min_qual": 3, "w_total_yrs": 20, "w_rel_yrs": 20, "w_qual": 10, "w_cert": 12, "w_dom_keywords": 24, "w_sen_verbs": 14, "min_score": 77},
+
+    "PRA-1": {"level": 16, "min_total_exp": 5, "min_ph_exp": 3, "min_qual": 2, "w_total_yrs": 20, "w_rel_yrs": 20, "w_qual": 10, "w_cert": 12, "w_dom_keywords": 22, "w_sen_verbs": 12, "min_score": 65},
+    "PRA-2": {"level": 17, "min_total_exp": 6, "min_ph_exp": 4, "min_qual": 2, "w_total_yrs": 20, "w_rel_yrs": 20, "w_qual": 10, "w_cert": 12, "w_dom_keywords": 22, "w_sen_verbs": 12, "min_score": 68},
+    "PRA-3": {"level": 18, "min_total_exp": 7, "min_ph_exp": 5, "min_qual": 3, "w_total_yrs": 20, "w_rel_yrs": 20, "w_qual": 10, "w_cert": 12, "w_dom_keywords": 22, "w_sen_verbs": 14, "min_score": 72},
+    "PRA-4": {"level": 19, "min_total_exp": 8, "min_ph_exp": 6, "min_qual": 3, "w_total_yrs": 20, "w_rel_yrs": 20, "w_qual": 10, "w_cert": 12, "w_dom_keywords": 22, "w_sen_verbs": 14, "min_score": 76},
+    "PRA-5": {"level": 20, "min_total_exp": 9, "min_ph_exp": 7, "min_qual": 3, "w_total_yrs": 20, "w_rel_yrs": 20, "w_qual": 10, "w_cert": 12, "w_dom_keywords": 22, "w_sen_verbs": 16, "min_score": 80},
+
+    "SPA-1": {"level": 21, "min_total_exp": 7, "min_ph_exp": 5, "min_qual": 2, "w_total_yrs": 22, "w_rel_yrs": 22, "w_qual": 10, "w_cert": 12, "w_dom_keywords": 20, "w_sen_verbs": 14, "min_score": 65},
+    "SPA-2": {"level": 22, "min_total_exp": 8, "min_ph_exp": 6, "min_qual": 2, "w_total_yrs": 22, "w_rel_yrs": 22, "w_qual": 10, "w_cert": 12, "w_dom_keywords": 20, "w_sen_verbs": 14, "min_score": 68},
+    "SPA-3": {"level": 23, "min_total_exp": 9, "min_ph_exp": 7, "min_qual": 3, "w_total_yrs": 22, "w_rel_yrs": 22, "w_qual": 10, "w_cert": 12, "w_dom_keywords": 20, "w_sen_verbs": 14, "min_score": 72},
+    "SPA-4": {"level": 24, "min_total_exp": 10, "min_ph_exp": 8, "min_qual": 3, "w_total_yrs": 22, "w_rel_yrs": 22, "w_qual": 10, "w_cert": 12, "w_dom_keywords": 20, "w_sen_verbs": 14, "min_score": 76},
+    "SPA-5": {"level": 25, "min_total_exp": 11, "min_ph_exp": 9, "min_qual": 3, "w_total_yrs": 22, "w_rel_yrs": 22, "w_qual": 10, "w_cert": 12, "w_dom_keywords": 20, "w_sen_verbs": 14, "min_score": 80},
+}
+
+MAX_TOTAL_YEARS = 15.0
+MAX_RELEVANT_YEARS = 10.0
+MAX_QUALIFICATION = 4.0
+MAX_CERTIFICATIONS = 3.0
+MAX_DOMAIN_KEYWORDS = 8.0
+MAX_SENIORITY_VERBS = 6.0
+
+
+class ResumeExtractionOutput(BaseModel):
+    total_exp_years: float = Field(description="Total years of professional experience across all roles. E.g., 5.5")
+    ph_africa_exp_years: float = Field(description="Years of relevant Public Health (PH) experience specifically in Africa.")
+    qualification: int = Field(description="Highest qualification integer level: 1 for OND/Diploma/BSc in view, 2 for BSc, 3 for MSc/MPH, 4 for PhD.")
+    certifications_count: int = Field(description="Number of professional certifications listed in the resume.")
+    domain_keywords_found: List[str] = Field(description="List of domain keywords explicitly found in the resume from this exact list: [LMIS, RI, OBR, LQAS, IDSR, Supportive supervision, Stakeholder engagement, Donor reporting, Workplan, Quality assurance, Budget, Policy, Logistics, Data quality]")
+    seniority_verbs_found: List[str] = Field(description="List of seniority verbs explicitly found in the resume from this exact list: [led, managed, coordinated, supervised, designed, owned, delivered, facilitated, implemented, oversaw]")
     
-output_parser = PydanticOutputParser(pydantic_object=LLMRelevanceOutput)
+output_parser = PydanticOutputParser(pydantic_object=ResumeExtractionOutput)
 
 load_dotenv()
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 llm = ChatGroq(
     model="llama-3.3-70b-versatile",
-    temperature=0.5,
+    temperature=0.0,  # low temperature for data extraction accuracy
     max_tokens=None,
     timeout=None,
     max_retries=2
 )
 
 prompt = PromptTemplate(
-    input_variables=["job_description", "resume"],
-    template="""You are an experienced recruiter evaluating resumes against a job description. 
-    Please read the following job description and resume and provide a relevance score on a scale of 1 to 10 (1 being least relevant, 10 being most relevant) and a brief explanation for your score.
+    input_variables=["resume"],
+    template="""You are an expert HR documentation parser extracting explicit candidate data for an automated leveling engine.
+Analyze the following resume carefully. You must extract integers and floats accurately based on the candidate's work history timeline.
 
-    Job Description:
-    {job_description}
+Candidate Resume Text:
+---------------------
+{resume}
+---------------------
 
-    Resume:
-    {resume}
-
-    {format_instructions}""",
-        partial_variables={"format_instructions": output_parser.get_format_instructions()}
+{format_instructions}""",
+    partial_variables={"format_instructions": output_parser.get_format_instructions()}
 )
 
 rank_chain = prompt | llm | output_parser
 
 def extract_text_from_file(file: UploadFile) -> str | None:
-    # Using Python's tempfile module to create a temporary file for storing the extracted texts
     with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
         tmp_file.write(file.file.read())
         temp_file_path = tmp_file.name
@@ -71,37 +112,191 @@ def extract_text_from_file(file: UploadFile) -> str | None:
     finally:
         os.unlink(temp_file_path)
 
-class RankingState:
-    job_description: str
+def evaluate_candidate(extracted: ResumeExtractionOutput):
+    QUAL_MAP = {0: "None/Unknown", 1: "OND/Diploma", 2: "BSc", 3: "MSc/MPH", 4: "PhD"}
+
+    eligible_levels = []
+    passed_gates_failed_score = []  # Passed all hard gates but score below threshold
+    failed_gate_records = []        # Failed at least one hard gate
+
+    for level_name, reqs in CMS_MATRIX.items():
+        # --- Gate-by-gate audit ---
+        gates = [
+            {
+                "criterion": "Total Experience",
+                "required": f"{reqs['min_total_exp']}y",
+                "has": f"{extracted.total_exp_years}y",
+                "passed": extracted.total_exp_years >= reqs["min_total_exp"],
+                "gap": max(0, round(reqs["min_total_exp"] - extracted.total_exp_years, 1)),
+            },
+            {
+                "criterion": "Africa PH Experience",
+                "required": f"{reqs['min_ph_exp']}y",
+                "has": f"{extracted.ph_africa_exp_years}y",
+                "passed": extracted.ph_africa_exp_years >= reqs["min_ph_exp"],
+                "gap": max(0, round(reqs["min_ph_exp"] - extracted.ph_africa_exp_years, 1)),
+            },
+            {
+                "criterion": "Minimum Qualification",
+                "required": QUAL_MAP.get(reqs["min_qual"], "Unknown"),
+                "has": QUAL_MAP.get(extracted.qualification, "Unknown"),
+                "passed": extracted.qualification >= reqs["min_qual"],
+                "gap": 0,
+            },
+        ]
+        gate_failed = any(not g["passed"] for g in gates)
+
+        if gate_failed:
+            failed_gate_records.append({"level": level_name, "gates": gates})
+            continue
+
+        # --- Weighted score (all gates passed) ---
+        norm_total_yrs = min(1.0, extracted.total_exp_years / MAX_TOTAL_YEARS) if extracted.total_exp_years else 0
+        norm_rel_yrs   = min(1.0, extracted.ph_africa_exp_years / MAX_RELEVANT_YEARS) if extracted.ph_africa_exp_years else 0
+        norm_qual      = min(1.0, extracted.qualification / MAX_QUALIFICATION) if extracted.qualification else 0
+        norm_cert      = min(1.0, extracted.certifications_count / MAX_CERTIFICATIONS) if extracted.certifications_count else 0
+        norm_dom       = min(1.0, len(extracted.domain_keywords_found) / MAX_DOMAIN_KEYWORDS) if extracted.domain_keywords_found else 0
+        norm_sen       = min(1.0, len(extracted.seniority_verbs_found) / MAX_SENIORITY_VERBS) if extracted.seniority_verbs_found else 0
+
+        score = (norm_total_yrs * reqs["w_total_yrs"] +
+                 norm_rel_yrs   * reqs["w_rel_yrs"] +
+                 norm_qual      * reqs["w_qual"] +
+                 norm_cert      * reqs["w_cert"] +
+                 norm_dom       * reqs["w_dom_keywords"] +
+                 norm_sen       * reqs["w_sen_verbs"])
+
+        breakdown = {
+            "Total Years":    f"{round(norm_total_yrs * reqs['w_total_yrs'], 1)}/{reqs['w_total_yrs']}",
+            "Relevant Years": f"{round(norm_rel_yrs   * reqs['w_rel_yrs'],   1)}/{reqs['w_rel_yrs']}",
+            "Qualification":  f"{round(norm_qual      * reqs['w_qual'],       1)}/{reqs['w_qual']}",
+            "Certifications": f"{round(norm_cert      * reqs['w_cert'],       1)}/{reqs['w_cert']}",
+            "Keywords":       f"{round(norm_dom       * reqs['w_dom_keywords'],1)}/{reqs['w_dom_keywords']}",
+            "Verbs":          f"{round(norm_sen       * reqs['w_sen_verbs'],  1)}/{reqs['w_sen_verbs']}",
+        }
+
+        if score >= reqs["min_score"]:
+            eligible_levels.append({
+                "level_name": level_name,
+                "level_rank": reqs["level"],
+                "score": round(score, 2),
+                "breakdown": breakdown,
+            })
+        else:
+            passed_gates_failed_score.append({
+                "level": level_name,
+                "level_rank": reqs["level"],
+                "score": round(score, 2),
+                "threshold": reqs["min_score"],
+                "gap": round(reqs["min_score"] - score, 2),
+                "breakdown": breakdown,
+            })
+
+    # --- Common extracted metrics returned for all candidates ---
+    common_metrics = {
+        "total_exp":      extracted.total_exp_years,
+        "ph_exp":         extracted.ph_africa_exp_years,
+        "qualification":  extracted.qualification,
+        "certifications": extracted.certifications_count,
+        "keywords_found": extracted.domain_keywords_found,
+        "verbs_found":    extracted.seniority_verbs_found,
+    }
+
+    if not eligible_levels:
+        # Closest level the candidate almost reached (passed gates, smallest score gap)
+        closest = min(passed_gates_failed_score, key=lambda x: x["gap"]) if passed_gates_failed_score else None
+
+        # Show gate details for the first 3 PAS levels so HR can see the basic bar
+        gate_summary = [r for r in failed_gate_records if r["level"].startswith("PAS")][:3]
+
+        if closest:
+            reasoning = (
+                f"Passed all hard gates for {closest['level']} but scored {closest['score']}% "
+                f"against the required threshold of {closest['threshold']}% "
+                f"({closest['gap']} points short). "
+                f"Increasing Africa PH experience, domain keyword coverage, and formal "
+                f"certifications would improve the score significantly."
+            )
+        else:
+            top_failure_gates = []
+            if failed_gate_records:
+                top_failure_gates = [g["criterion"] for g in failed_gate_records[0]["gates"] if not g["passed"]]
+            reasoning = (
+                f"Did not meet the minimum hard gate requirements for any CMS level. "
+                f"Primary blockers: {', '.join(top_failure_gates) if top_failure_gates else 'multiple criteria'}. "
+                f"Review the Gate Analysis below for a level-by-level breakdown."
+            )
+
+        return {
+            "assigned_level": "None",
+            "score": closest["score"] if closest else 0,
+            "metrics": common_metrics,
+            "breakdown": closest["breakdown"] if closest else None,
+            "gate_analysis": gate_summary,
+            "closest_level": closest,
+            "reasoning": reasoning,
+        }
+
+    # --- Found eligible levels — return the highest one ---
+    eligible_levels.sort(key=lambda x: x["level_rank"], reverse=True)
+    best_match = eligible_levels[0]
+
+    return {
+        "assigned_level": best_match["level_name"],
+        "score": best_match["score"],
+        "metrics": common_metrics,
+        "breakdown": best_match["breakdown"],
+        "gate_analysis": None,
+        "closest_level": None,
+        "reasoning": (
+            f"Met all hard gates and scored {best_match['score']}% "
+            f"(threshold: {CMS_MATRIX[best_match['level_name']]['min_score']}%), "
+            f"qualifying for {best_match['level_name']}."
+        ),
+    }
+
+class LevelingState(TypedDict):
     resume_texts: Dict[str, str]
-    ranked_results: List[Dict[str, any]] = None
-    
-    def __init__(self, job_description: str, resume_texts: Dict[str, str], ranked_results: Optional[List[Dict[str, any]]] = None):
-        self.job_description = job_description
-        self.resume_texts = resume_texts
-        self.ranked_results = ranked_results
+    leveled_results: List[Dict]
 
-async def rank_single_resume(state: RankingState, filename: str, resume_text: str):
+async def process_single_resume(filename: str, resume_text: str):
     try:
-        llm_output: LLMRelevanceOutput = await rank_chain.ainvoke({"job_description": state.job_description, "resume": resume_text})
-        score = llm_output.relevance_score
-        reasoning = llm_output.reasoning
+        # LLM extracts the features
+        llm_output: ResumeExtractionOutput = await rank_chain.ainvoke({"resume": resume_text})
+        # Score the candidate deterministically
+        evaluation = evaluate_candidate(llm_output)
+        
+        return {
+            "filename": filename,
+            "assigned_level": evaluation["assigned_level"],
+            "score": evaluation["score"],
+            "reasoning": evaluation["reasoning"],
+            "metrics": evaluation["metrics"],
+            "breakdown": evaluation["breakdown"],
+            "gate_analysis": evaluation.get("gate_analysis"),
+            "closest_level": evaluation.get("closest_level"),
+        }
     except Exception as e:
-        print(f"Error parsing LLM output: {e}")
-        score = 0
-        reasoning = "Could not parse LLM output."
-    return {"filename": filename, "score": score, "reasoning": reasoning}
+        print(f"Error parsing LLM output for {filename}: {e}")
+        return {
+            "filename": filename,
+            "assigned_level": "Error",
+            "score": 0,
+            "reasoning": "Could not extract structured data. Ensure resume contains valid text.",
+            "metrics": None,
+            "breakdown": None,
+            "extracted_data": None
+        }
 
-async def process_resumes(state: RankingState):
-    tasks = [rank_single_resume(state, filename, text) for filename, text in state.resume_texts.items()]
+async def process_resumes(state: LevelingState):
+    tasks = [process_single_resume(filename, text) for filename, text in state["resume_texts"].items()]
     results = await asyncio.gather(*tasks)
-    return {"ranked_results": sorted(results, key=lambda x: x["score"], reverse=True)}
+    return {"leveled_results": sorted(results, key=lambda x: x["score"], reverse=True)}
 
-def format_results(state: RankingState):
-    return {"ranked_resumes": state.ranked_results}
+def format_results(state: LevelingState):
+    return {"leveled_results": state["leveled_results"]}
 
 # Define the LangGraph
-workflow = StateGraph(RankingState)
+workflow = StateGraph(LevelingState)
 workflow.add_node("process_resumes", process_resumes)
 workflow.add_node("format_results", format_results)
 

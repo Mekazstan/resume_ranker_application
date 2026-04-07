@@ -11,4 +11,5 @@ wheels/
 .venv
 venv/
 .env
+.env.*
 guides/
