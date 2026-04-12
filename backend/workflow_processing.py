@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime
 from fastapi import UploadFile
 from pydantic import BaseModel, Field
 from typing import List, Dict, Optional, TypedDict
@@ -44,12 +45,13 @@ CMS_MATRIX = {
     "SPA-5": {"level": 25, "min_total_exp": 11, "min_ph_exp": 9, "min_qual": 3, "w_total_yrs": 22, "w_rel_yrs": 22, "w_qual": 10, "w_cert": 12, "w_dom_keywords": 20, "w_sen_verbs": 14, "min_score": 80},
 }
 
-MAX_TOTAL_YEARS = 15.0
-MAX_RELEVANT_YEARS = 10.0
-MAX_QUALIFICATION = 4.0
-MAX_CERTIFICATIONS = 3.0
-MAX_DOMAIN_KEYWORDS = 8.0
-MAX_SENIORITY_VERBS = 6.0
+# Recalibrated caps — set so a genuinely strong-but-not-extreme candidate scores near 100%
+MAX_TOTAL_YEARS = 10.0        # 10-year veteran = full credit
+MAX_RELEVANT_YEARS = 7.0      # 7y Africa PH = full credit
+MAX_QUALIFICATION = 4.0       # unchanged
+MAX_CERTIFICATIONS = 3.0      # unchanged
+MAX_DOMAIN_KEYWORDS = 6.0     # 6 keyword hits = full credit
+MAX_SENIORITY_VERBS = 4.0     # 4 leadership verbs = full credit
 
 
 class ResumeExtractionOutput(BaseModel):
@@ -73,10 +75,49 @@ llm = ChatGroq(
     max_retries=2
 )
 
+def _current_month_year() -> str:
+    return datetime.now().strftime("%B %Y")  # e.g. "April 2026"
+
 prompt = PromptTemplate(
     input_variables=["resume"],
-    template="""You are an expert HR documentation parser extracting explicit candidate data for an automated leveling engine.
-Analyze the following resume carefully. You must extract integers and floats accurately based on the candidate's work history timeline.
+    template="""You are a precise HR documentation parser. Your job is to extract structured numeric data from a candidate resume for an automated role-levelling engine.
+
+CRITICAL RULES — read carefully before extracting:
+
+1. TOTAL EXPERIENCE (total_exp_years):
+   - Count ALL years of paid professional work, including internships, consultancy, volunteer-with-stipend, and programme support roles.
+   - Use the date ranges in the resume. If a role is "till date" or "present", calculate to """ + _current_month_year() + """.
+   - Sum all non-overlapping periods.
+
+2. AFRICA PUBLIC HEALTH EXPERIENCE (ph_africa_exp_years):
+   - This means time spent working ON or IN SUPPORT OF a public health programme in any African country.
+   - African countries include Nigeria, Ghana, Kenya, Ethiopia, Uganda, Rwanda, Tanzania, South Africa, Malawi, Zimbabwe, Zambia, and all others on the continent.
+   - Qualifying programme areas: HIV/AIDS, malaria, tuberculosis, polio, nutrition, immunisation, health system strengthening, RMNCH, family planning, disease surveillance.
+   - Qualifying roles: Programme Officer, Programme Assistant, M&E Officer, Admin Support (on a health project), Community Health Worker, Surge Staff, Intern (on a health project), Data Officer (on a health project).
+   - Do NOT restrict this to "Public Health" job titles. If the person is working on an HIV/AIDS or health project in an African country, those years count.
+   - Example: "Programme Assistant at AHNi, Anambra State, supporting HIV/AIDS programme" = Africa PH experience.
+
+3. QUALIFICATION (qualification integer):
+   - 1 = OND, HND, Diploma, or "BSc in view" / "awaiting results"
+   - 2 = BSc, BA, B.Ed, BTech or equivalent bachelor's degree
+   - 3 = MSc, MPH, MA, MBA, MPhil or equivalent postgraduate degree
+   - 4 = PhD or Doctorate
+   - Return the HIGHEST completed or in-view qualification found.
+
+4. CERTIFICATIONS (certifications_count):
+   - Count only formal certifications and structured professional trainings listed.
+   - Include: training courses completed, certificates awarded, and professional development programmes.
+   - Do NOT count degree programmes (those go in qualification).
+
+5. DOMAIN KEYWORDS (domain_keywords_found):
+   - Return ONLY keywords from this exact list that appear in the resume (case-insensitive):
+   - [LMIS, RI, OBR, LQAS, IDSR, Supportive supervision, Stakeholder engagement, Donor reporting, Workplan, Quality assurance, Budget, Policy, Logistics, Data quality]
+   - Include a keyword if the concept is clearly present, even if phrased slightly differently (e.g. "work plan" counts as "Workplan").
+
+6. SENIORITY VERBS (seniority_verbs_found):
+   - Return ONLY verbs from this exact list that appear in the resume:
+   - [led, managed, coordinated, supervised, designed, owned, delivered, facilitated, implemented, oversaw]
+   - Include a verb if any conjugation of it appears (e.g. "coordinates", "leading", "managed" all count).
 
 Candidate Resume Text:
 ---------------------
@@ -151,6 +192,12 @@ def evaluate_candidate(extracted: ResumeExtractionOutput):
             continue
 
         # --- Weighted score (all gates passed) ---
+        # Normalize weights per level so max achievable is always 100%.
+        # This corrects the original matrix where lower-level weight sums < 100.
+        w_total = (reqs["w_total_yrs"] + reqs["w_rel_yrs"] + reqs["w_qual"] +
+                   reqs["w_cert"] + reqs["w_dom_keywords"] + reqs["w_sen_verbs"])
+        factor  = 100.0 / w_total  # e.g. PAS-1 sum=50 → factor=2.0
+
         norm_total_yrs = min(1.0, extracted.total_exp_years / MAX_TOTAL_YEARS) if extracted.total_exp_years else 0
         norm_rel_yrs   = min(1.0, extracted.ph_africa_exp_years / MAX_RELEVANT_YEARS) if extracted.ph_africa_exp_years else 0
         norm_qual      = min(1.0, extracted.qualification / MAX_QUALIFICATION) if extracted.qualification else 0
@@ -158,20 +205,28 @@ def evaluate_candidate(extracted: ResumeExtractionOutput):
         norm_dom       = min(1.0, len(extracted.domain_keywords_found) / MAX_DOMAIN_KEYWORDS) if extracted.domain_keywords_found else 0
         norm_sen       = min(1.0, len(extracted.seniority_verbs_found) / MAX_SENIORITY_VERBS) if extracted.seniority_verbs_found else 0
 
-        score = (norm_total_yrs * reqs["w_total_yrs"] +
-                 norm_rel_yrs   * reqs["w_rel_yrs"] +
-                 norm_qual      * reqs["w_qual"] +
-                 norm_cert      * reqs["w_cert"] +
-                 norm_dom       * reqs["w_dom_keywords"] +
-                 norm_sen       * reqs["w_sen_verbs"])
+        # Effective (normalized) weight for each factor
+        ew_total = reqs["w_total_yrs"]     * factor
+        ew_rel   = reqs["w_rel_yrs"]       * factor
+        ew_qual  = reqs["w_qual"]          * factor
+        ew_cert  = reqs["w_cert"]          * factor
+        ew_dom   = reqs["w_dom_keywords"]  * factor
+        ew_sen   = reqs["w_sen_verbs"]     * factor
+
+        score = (norm_total_yrs * ew_total +
+                 norm_rel_yrs   * ew_rel   +
+                 norm_qual      * ew_qual  +
+                 norm_cert      * ew_cert  +
+                 norm_dom       * ew_dom   +
+                 norm_sen       * ew_sen)
 
         breakdown = {
-            "Total Years":    f"{round(norm_total_yrs * reqs['w_total_yrs'], 1)}/{reqs['w_total_yrs']}",
-            "Relevant Years": f"{round(norm_rel_yrs   * reqs['w_rel_yrs'],   1)}/{reqs['w_rel_yrs']}",
-            "Qualification":  f"{round(norm_qual      * reqs['w_qual'],       1)}/{reqs['w_qual']}",
-            "Certifications": f"{round(norm_cert      * reqs['w_cert'],       1)}/{reqs['w_cert']}",
-            "Keywords":       f"{round(norm_dom       * reqs['w_dom_keywords'],1)}/{reqs['w_dom_keywords']}",
-            "Verbs":          f"{round(norm_sen       * reqs['w_sen_verbs'],  1)}/{reqs['w_sen_verbs']}",
+            "Total Years":    f"{round(norm_total_yrs * ew_total, 1)}/{round(ew_total, 1)}",
+            "Relevant Years": f"{round(norm_rel_yrs   * ew_rel,   1)}/{round(ew_rel,   1)}",
+            "Qualification":  f"{round(norm_qual      * ew_qual,  1)}/{round(ew_qual,  1)}",
+            "Certifications": f"{round(norm_cert      * ew_cert,  1)}/{round(ew_cert,  1)}",
+            "Keywords":       f"{round(norm_dom       * ew_dom,   1)}/{round(ew_dom,   1)}",
+            "Verbs":          f"{round(norm_sen       * ew_sen,   1)}/{round(ew_sen,   1)}",
         }
 
         if score >= reqs["min_score"]:
